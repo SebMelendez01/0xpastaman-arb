@@ -15,7 +15,6 @@ end
 
 Base.@kwdef mutable struct Trade
     address::String = ""
-    tokens::String = ""
     tendered::Token = Token()
     received::Token = Token()
 end
@@ -29,15 +28,15 @@ end
 hex(n) = string(n, base = 16)
 
 
-function f(type, pools, prices)
-    
+function f(pools, prices)
+
     builtpools = []
-    for i in eachindex(pools)
-        println(type[i])
-        if(cmp(type[i][1], "ProductTwoCoin") == 0)
-            push!(builtpools, ProductTwoCoin(pools[i][1], pools[i][2], pools[i][3]))
-        elseif(cmp(type[i][1], "GeometricMeanTwoCoin") == 0)
-            push!(builtpools, GeometricMeanTwoCoin(pools[i][1], pools[i][2], pools[i][3], pools[i][4]))
+    for pool in pools
+        if(cmp(pool["type"], "ProductTwoCoin") == 0)
+            push!(builtpools, ProductTwoCoin(pool["pool"][1], pool["pool"][2], pool["pool"][3]))
+        elseif(cmp(pool["type"], "GeometricMeanTwoCoin") == 0)
+            println("**TO DO** add GeometricMeanTwoCoin ")
+            # push!(builtpools, GeometricMeanTwoCoin(pools[i][1], pools[i][2], pools[i][3], pools[i][4]))
         end
     end
     builtpools = convert(Array{CFMM{Float64}}, builtpools)
@@ -67,8 +66,8 @@ function f(type, pools, prices)
     for (i, (Δ, Λ)) in enumerate(zip(router.Δs, router.Λs))
         trade = Trade()
         tokens = router.cfmms[i].Ai
-        trade.address = type[i][5]
-        trade.tokens = type[i][4]
+        trade.address = pools[i]["address"]
+        # trade.tokens = type[i][4]
         # println("0x$(hex(type[i][2])):")
         # println("\tTendered basket:")
         
@@ -122,11 +121,11 @@ function f(type, pools, prices)
         trades = []
     end
 
-    println("\n--------------------TOKENS REQUIRED TO KICKSTART ARBITRAGE--------------------\n")
-    println(kickstart)
+    # println("\n--------------------TOKENS REQUIRED TO KICKSTART ARBITRAGE--------------------\n")
+    # println(kickstart)
 
     calldata = Calldata(kickstart, trades)
-    # println(calldata)
+    # # println(calldata)
     j = JSON.json(calldata)
     return j
 

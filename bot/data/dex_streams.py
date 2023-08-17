@@ -1,6 +1,8 @@
 import os
 import json
 import time
+import logging
+import datetime
 import eth_abi
 import eth_utils
 import asyncio
@@ -16,11 +18,14 @@ from dotenv import load_dotenv
 load_dotenv()
 INFURA_API_KEY = os.getenv('INFURA_API_KEY')
 
+    
+
+
 
 class DexStream:
     """
     Dex Streams aysnconously update the reserve data
-    reserves = pair_contract.functions.getReserves().call()
+    listen to sync even for specific dex contracts
     """
 
     def __init__(
@@ -29,7 +34,7 @@ class DexStream:
             ws_endpoint: str,
             publisher: Optional[aioprocessing.AioQueue] = None,
             #  message_formatter: Callable = default_message_format,
-            debug: bool = False
+            debug: bool = True
     ):
         self.dex_dict = dex_dict
         self.ws_endpoint = ws_endpoint
@@ -40,17 +45,6 @@ class DexStream:
     def publish(self, data: Any):
         if self.publisher:
             self.publisher.put(data)
-    
-    def start_streams(self):
-        streams = []
-        dex_stream = reconnecting_websocket_loop(
-            self.stream_uniswap_v2_sync_events,
-            tag='Dex Stream'
-        )
-        streams.extend([asyncio.ensure_future(f) for f in [dex_stream]])
-
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(asyncio.wait(streams))
 
     def handle_update_reserves(self, address, reserves):
         dex = self.dex_dict[address]
@@ -58,6 +52,40 @@ class DexStream:
             reserves[index] = reserve / (10 ** dex.tokens[index].unit_conversion)
         return self.dex_dict[address].update_reserves(reserves)
 
+    """
+
+    {
+        source : dex | coinbase
+        prices : []
+        pools : [
+            {
+                pool : ([reserves], fee, [global_index])
+                type : CFMM.Type.value
+                Address : 0x...
+            }
+        ]
+    }
+
+    """
+    def message_format(self):
+        pools = []
+        prices = [None] * 5 # NEED TO SET DYNAMICALLY
+        for _, value in self.dex_dict.items():
+            for token in value.tokens:
+                prices[token.global_index - 1] = token.get_spot_price() 
+            data = {
+                "pool" : (value.get_reserves(), value.fee, list(token.global_index for token in value.tokens)),
+                "type" : value.type.value,
+                "address" : value.address
+            }
+            pools.append(data)
+        
+        return {
+            'source': 'dex',
+            "pools" : pools,
+            "prices" : prices,
+            "time" : time.time()
+        }
     async def stream_uniswap_v2_sync_events(self):
         sync_event_selector = self.web3.keccak(
             text='Sync(uint112,uint112)'
@@ -83,12 +111,27 @@ class DexStream:
                 event = json.loads(msg)['params']['result']
                 address = event['address'].lower()
                 if address in pools:
+                    s = time.time()
                     data = eth_abi.decode(
                         ['uint112', 'uint112'],
                         eth_utils.decode_hex(event['data'])
                     )
+                    """
+                    Publish the data everytime there is a change in the reserves of 
+                    a specific dex in a standard format do that is can be processed.
+
+                    Bot processes data by consuming the queue and checking if the 
+                    current message
+                    """
                     if self.handle_update_reserves(address, list(map(int, data))):
-                        print("TO DO: SEND MESSAGE")
+                        
+                        self.publish(self.message_format())#**TO DO** Create Standard Message Formate
+                        # print("TO DO: SEND MESSAGE")
+                    e = time.time()
+                    if self.debug:
+                        dbg_msg = self.dex_dict[address].debug_message()
+                        print(f'{datetime.datetime.now()} {dbg_msg} -> Update took: {round((e - s), 6)} seconds')
+
 
         #https://docs.alchemy.com/reference/best-practices-for-using-websockets-in-web3
     

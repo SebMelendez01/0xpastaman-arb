@@ -1,13 +1,12 @@
 import json
+import time
 import asyncio
+import datetime
 import websockets
 import aioprocessing
 from typing import Dict, Any, Optional
 from data.dex import TOKEN
 from data.utils import reconnecting_websocket_loop
-
-
-
 
 
 class TokenStream:
@@ -21,27 +20,17 @@ class TokenStream:
             self, 
             tokens: Dict[str, TOKEN],
             ws_endpoint: str,
-            publisher: Optional[aioprocessing.AioQueue] = None
+            publisher: Optional[aioprocessing.AioQueue] = None,
+            debug: bool = False
     ):
         self.tokens = tokens
         self.ws_endpoint = ws_endpoint
         self.publisher = publisher
+        self.debug = debug
 
     def publish(self, data: Any):
         if self.publisher:
             self.publisher.put(data)
-
-    def start_streams(self):
-        streams = []
-        token_stream = reconnecting_websocket_loop(
-            self.stream_token_prices,
-            tag='Token Stream'
-        )
-        streams.extend([asyncio.ensure_future(f) for f in [token_stream]])
-
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(asyncio.wait(streams))
-
     def create_product_ids(self, token: str):
         if(token != 'USDC'):
             return f"{token}-USD"
@@ -64,12 +53,18 @@ class TokenStream:
 
             while True:
                 msg = await asyncio.wait_for(ws.recv(), timeout=60 * 10)
+                s = time.time()
                 price_data = json.loads(msg)
                 symbol = price_data["product_id"].split("-")[0]
                 spot = float(price_data["price"])
                 if self.tokens[symbol].update_stop_price(spot):
-                    print("TO DO: SEND MESSAGE")
-                
+                    hello = "TO DO"
+                    # print("TO DO: SEND MESSAGE")
+                e = time.time()
+                if self.debug:
+                    dbg_msg = self.tokens[symbol].debug_message()
+                    print(f'{datetime.datetime.now()} {dbg_msg} -> Update took: {round((e - s), 6)} seconds')
+
 
 if __name__ == "__main__":
     queue = aioprocessing.AioQueue()

@@ -1,9 +1,9 @@
 from enum import Enum
 from typing import Dict, List
-from web3 import  Web3, WebsocketProvider
+from web3 import  Web3, HTTPProvider
 
 class CFMM_TYPE(Enum):
-    UNISWAPV2 = "uniswapv2"
+    UNISWAPV2 = "ProductTwoCoin"
     UNISWAPV3 = "uniswapv3"
     BALENCER = "balencer"
     CURVE = "curve"
@@ -22,12 +22,16 @@ class TOKEN():
         self.unit_conversion = unit_conversion
         self.spot = 1 if symbol == 'USDC' else None
     """
+    Debug
+    """
+    def debug_message(self) -> str:
+        return f"{self.symbol}: ${self.spot}"
+    """
     setters
     """
     def update_stop_price(self, spot):
         if spot != self.spot:
             self.spot = spot
-            print(f"{self.symbol}  {self.spot}")
             return True
         return False
     def get_spot_price(self) -> float:
@@ -51,8 +55,11 @@ class DEX():
         self.trading_symbols = trading_symbols
         self.fee = fee
         reserves = [0.0] * len(tokens)
+        """
+        Get reserves on init
+        """
         if(ws_endpoint != None):
-            web3 = Web3(WebsocketProvider(ws_endpoint))
+            web3 = Web3(HTTPProvider(ws_endpoint))
             pair_contract = web3.eth.contract(address=address, abi=abi)
             reserves = pair_contract.functions.getReserves().call()
             reserves.pop()
@@ -60,7 +67,11 @@ class DEX():
 
         self.reserves: List[float] = reserves
         self.tokens = tokens
-
+    """
+    Debug function
+    """
+    def debug_message(self) -> str:
+        return f"{self.type.value} {self.address} -> {self.trading_symbols[0]}(${self.tokens[0].get_spot_price()}): {self.reserves[0]}, {self.trading_symbols[1]}(${self.tokens[1].get_spot_price()}): {self.reserves[1]}"
     """
     Getters
     """
@@ -82,8 +93,7 @@ class DEX():
         ):
         if self.reserves != reserves:
             self.reserves = reserves
-            print(self.trading_symbols)
-            print(f"\t{self.reserves}")
+
             return True
         return False
 
