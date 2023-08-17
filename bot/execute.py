@@ -6,22 +6,25 @@ import asyncio
 import functools
 import aioprocessing
 import multiprocessing
-from multiprocessing import Process
-from data.dex import DEX, TOKEN, CFMM_TYPE
 from typing import Optional
+from multiprocessing import Process
 
+from addresses import UNISWAP_ABI
 from data.dex_streams import DexStream
 from data.token_streams import TokenStream
+from data.dex import DEX, TOKEN, CFMM_TYPE
 from data.utils import reconnecting_websocket_loop
 
 from dotenv import load_dotenv
-from addresses import UNISWAP_ABI
+
 
 from julia import Main
 Main.include("./utils/utils.jl")
 
 load_dotenv()
 INFURA_API_KEY = os.getenv('INFURA_API_KEY')
+
+
 
 def signal_handler(sig, frame):
     print('Program Shutting Down! Please Wait.')
@@ -41,7 +44,7 @@ async def shutdown(sig, loop):
     print('finished awaiting cancelled tasks, results: {0}'.format(results))
     loop.stop()
 
-def start_streams(_dex_stream:DexStream=None, _token_stream:TokenStream = None):
+def start_streams(_dex_stream:DexStream = None, _token_stream:TokenStream = None):
         streams = []
         token_stream = reconnecting_websocket_loop(
             _token_stream.stream_token_prices,
@@ -57,9 +60,7 @@ def start_streams(_dex_stream:DexStream=None, _token_stream:TokenStream = None):
         streams.extend([asyncio.ensure_future(f) for f in [token_stream, dex_stream]])
 
         loop = asyncio.get_event_loop()
-        loop.add_signal_handler(signal.SIGINT,
-                        functools.partial(asyncio.ensure_future,
-                                          shutdown(signal.SIGINT, loop)))
+        loop.add_signal_handler(signal.SIGINT, functools.partial(asyncio.ensure_future, shutdown(signal.SIGINT, loop)))
         try: 
             loop.run_until_complete(asyncio.wait(streams))
         finally:
@@ -118,18 +119,26 @@ async def consume(subscriber: aioprocessing.AioQueue):
                 print(f"Time to calculate opportunity {round((e - data['time']), 4)} seconds")
                 # print(json.dumps(trades, indent=4))
             # pprint.pprint(data)
+        # except KeyboardInterrupt:
+        #     print ("Bye")
+        #     break
         except Exception as e:
             raise e
+        
 
 async def main():
     queue = aioprocessing.AioQueue()
     p1 = Process(target=setup_streams, args=(queue,))
     p1.start()
+    #https://github.com/dano/aioprocessing/issues/21
+    #https://medium.com/@cziegler_99189/gracefully-shutting-down-async-multiprocesses-in-python-2223be384510
     await consume(queue)
     p1.join()
     
 #https://medium.com/@cziegler_99189/gracefully-shutting-down-async-multiprocesses-in-python-2223be384510
 #https://www.coingecko.com/en/api/documentation
+#egienPhi
+
 if __name__ == '__main__':
     signal.signal(signal.SIGINT, signal_handler)
 
