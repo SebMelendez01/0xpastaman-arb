@@ -1,6 +1,8 @@
 import os
+import sys
 import json
 import time
+import getopt
 import signal
 import asyncio
 import functools
@@ -24,25 +26,30 @@ Main.include("./utils/utils.jl")
 load_dotenv()
 INFURA_API_KEY = os.getenv('INFURA_API_KEY')
 
+# def signal_handler(sig, frame):
+#    
+#     # get all active child processes
+#     children = multiprocessing.active_children()
+#     for child in children:
+#         print(f"Killing Child Process: {child.pid}")
+#         child.kill()
+#     exit(0)
+class SignalHandler:
+    KEEP_PROCESSING = True
+    def __init__(self, publisher: aioprocessing.AioQueue):
+        signal.signal(signal.SIGINT, self.exit_gracefully)
+        signal.signal(signal.SIGTERM, self.exit_gracefully)
+        self.publisher = publisher
 
+    def exit_gracefully(self, signum, frame):
+        print('Program Shutting Down! Please Wait.')
+        children = multiprocessing.active_children()
+        for child in children:
+            print(f"Killing Child Process: {child.pid}")
+            child.kill()
+        self.publisher.put(None)
+        self.KEEP_PROCESSING = False
 
-def signal_handler(sig, frame):
-    print('Program Shutting Down! Please Wait.')
-    # get all active child processes
-    children = multiprocessing.active_children()
-    for child in children:
-        print(f"Killing Child Process: {child.pid}")
-        child.kill()
-    exit(0)
-
-async def shutdown(sig, loop):
-    print('caught {0}'.format(sig.name))
-    tasks = [task for task in asyncio.Task.all_tasks() if task is not
-            asyncio.tasks.Task.current_task()]
-    list(map(lambda task: task.cancel(), tasks))
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    print('finished awaiting cancelled tasks, results: {0}'.format(results))
-    loop.stop()
 
 def start_streams(_dex_stream:DexStream = None, _token_stream:TokenStream = None):
         streams = []
@@ -60,13 +67,11 @@ def start_streams(_dex_stream:DexStream = None, _token_stream:TokenStream = None
         streams.extend([asyncio.ensure_future(f) for f in [token_stream, dex_stream]])
 
         loop = asyncio.get_event_loop()
-        loop.add_signal_handler(signal.SIGINT, functools.partial(asyncio.ensure_future, shutdown(signal.SIGINT, loop)))
-        try: 
-            loop.run_until_complete(asyncio.wait(streams))
-        finally:
-            loop.close()
+        loop.run_until_complete(asyncio.wait(streams))
+        loop.close()
+ 
 
-def setup_streams(publisher: aioprocessing.AioQueue):
+def setup_streams(publisher: aioprocessing.AioQueue, debug:bool):
     infura_ws = f"wss://mainnet.infura.io/ws/v3/{INFURA_API_KEY}"
     infura_rpc = f"https://mainnet.infura.io/v3/{INFURA_API_KEY}"
 
@@ -89,7 +94,8 @@ def setup_streams(publisher: aioprocessing.AioQueue):
             AAVE_ETH.get_address().lower(): AAVE_ETH
         },
         infura_ws,
-        publisher
+        publisher,
+        debug=debug
     )
 
     token_stream = TokenStream(
@@ -105,41 +111,46 @@ def setup_streams(publisher: aioprocessing.AioQueue):
     )
     start_streams(dex_stream, token_stream)
      
-async def consume(subscriber: aioprocessing.AioQueue):
-    while True:
-        try:
-            data = await subscriber.coro_get()
+async def consume(subscriber: aioprocessing.AioQueue, signal_handler: SignalHandler, debug:bool):
+    while signal_handler.KEEP_PROCESSING:
+        data = await subscriber.coro_get()
+        if data is None:
+            break
+        if(data["source"] == "dex"):
             """
-            In order to run the routing sim I need to send a snapshot of all of the 
-            of the pools in tuple
+            Simulate the opportunity with Convex Opt. in Julia
             """
-            if(data["source"] == "dex"):
-                trades = json.loads(Main.f(data["pools"], data["prices"]))
-                e = time.time()
-                print(f"Time to calculate opportunity {round((e - data['time']), 4)} seconds")
-                # print(json.dumps(trades, indent=4))
+            trades = json.loads(Main.f(data["pools"], data["prices"]))
+            e = time.time()
+            if debug:
+                print(f"Time to simulate opportunity: {round((e - data['time']), 4)} seconds")
+            # print(json.dumps(trades, indent=4))
             # pprint.pprint(data)
-        # except KeyboardInterrupt:
-        #     print ("Bye")
-        #     break
-        except Exception as e:
-            raise e
         
 
-async def main():
-    queue = aioprocessing.AioQueue()
-    p1 = Process(target=setup_streams, args=(queue,))
-    p1.start()
-    #https://github.com/dano/aioprocessing/issues/21
-    #https://medium.com/@cziegler_99189/gracefully-shutting-down-async-multiprocesses-in-python-2223be384510
-    await consume(queue)
-    p1.join()
+async def main(argv):
+    debug = False
+    opts, _ = getopt.getopt(argv,"hv",["debug"])
+    for opt, _ in opts:
+        if opt == '-h':
+            print ('add -v or --debug flag for debug messages ')
+            sys.exit()
+        elif opt in ("-v", "--debug"):
+            debug = True
     
-#https://medium.com/@cziegler_99189/gracefully-shutting-down-async-multiprocesses-in-python-2223be384510
-#https://www.coingecko.com/en/api/documentation
-#egienPhi
+    queue = aioprocessing.AioQueue()
+    signal_handler = SignalHandler(queue)
+
+    # Create and start streams
+    streams = Process(target=setup_streams, args=(queue, debug,))
+    streams.start()
+
+    # Set up Consumer
+    await consume(queue, signal_handler, debug)
+    
+    # Wait for streams to shut down
+    streams.join()
+    sys.exit()
 
 if __name__ == '__main__':
-    signal.signal(signal.SIGINT, signal_handler)
-
-    asyncio.run(main())
+    asyncio.run(main(sys.argv[1:]))

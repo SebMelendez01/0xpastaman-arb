@@ -6,12 +6,17 @@ Now that we are past a disclaimer, lets get into it. This bot focuses on off-cha
 ### Current Vunerablities
 The bot currently does not take into account "poison tokens." Currently the transaction profit is not simulated on chain and therefore the bot risks submitting transactions to the network that will not be or were never valid. This can be fixed with the flashbots code by only calling `coinbase.transer` if the transaction was profitable and everything succeeded. 
 ### Future Work and Next Steps
+Updating the Framework: In order to scale the `DexStream` and `TokenStream` effeciently we need to dynaically get Dex's from the Mempool. We can do this by using a `filter` to look specifically for any `transaction` that interacts with the UniswapV2Router. We can then take the `path` function param and find all the paths that people are swaping through but calling the `FactoryV2` contract. We can then check if the token price exists on some API service, if it does we can add the tokens to both the `DexStream` and `TokenStream`.
+
+Note: CoingeckoAPI doesn't allow me to get all to coins that I want. Need to figure out another solution
+
+
 The bot currently does not scrape/listen to the mempool for DEX's/Tokens to add to the `DexStream` and `TokenStream`. The goal is to instead of using Coinbase API to get the token prices use CoinGeckoAPI as you can send the token address rather that the Ticker Symbol of the token. This will be more effecient and allow for the ability to get DEXs and tokens based on addresses rather than keeping a database to switch. If we are to use the CoinGeckoAPI although it would allow a for use to get price data based on `address` we would need to poll for the data. Best way to do that is instead of set up a stream, every time reserves are updated we quickly request for all token prices async. If I go ahead with this I can turn the token stream into the Mempool stream. 
 
 The issue with not constantly checking the price is that arbs can be created from a change in reserve amount on a dex but also a change in the token price on a CEX. By only getting price data when reserves changes we miss an opportunity. 
 
 ### Current implemenation 
-Pools are required to be build by the user. This is not scalable and as more code is added this will be fixed. The currently contract implementation is only golfed AAVE flashloan calls. Uniswap FlashCall is also another option. 
+Pools are required to be build by the user. This is not scalable and as more code is added this will be fixed. The currently contract implementation is only golfed AAVE flashloan calls. Uniswap FlashCall is also another option. We are also currently only looking at UniV2
 # NOTES: 
 This repo is in developement and therefore this project is currently not made to be cloned as well as the readme is a culmination of notekeeping and thought process. 
 

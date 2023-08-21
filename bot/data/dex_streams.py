@@ -19,13 +19,13 @@ load_dotenv()
 INFURA_API_KEY = os.getenv('INFURA_API_KEY')
 
     
-
-
-
 class DexStream:
     """
-    Dex Streams aysnconously update the reserve data
-    listen to sync even for specific dex contracts
+    Takes a group of Dex's and streams changes in reserves to update the reserves on a specific dex
+    1. Speed to compute update is important, use O(1) access time instead of iterating over an array of DEXs
+    2. Once an update occures need to dynamically get price data for each token, might be easier instead
+       of updated token price in each token, keep token data as global with each array and ping for price data
+       every time we need the array, can use pipes to ping. 
     """
 
     def __init__(
@@ -34,7 +34,7 @@ class DexStream:
             ws_endpoint: str,
             publisher: Optional[aioprocessing.AioQueue] = None,
             #  message_formatter: Callable = default_message_format,
-            debug: bool = True
+            debug: bool = False
     ):
         self.dex_dict = dex_dict
         self.ws_endpoint = ws_endpoint
@@ -49,7 +49,7 @@ class DexStream:
     def handle_update_reserves(self, address, reserves):
         dex = self.dex_dict[address]
         for index, reserve in enumerate(reserves):
-            reserves[index] = reserve / (10 ** dex.tokens[index].unit_conversion)
+            reserves[index] = reserve / (10 ** dex.tokens[index].decimals)
         return self.dex_dict[address].update_reserves(reserves)
 
     """

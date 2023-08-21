@@ -37,7 +37,7 @@ Main.include("./utils/utils.jl")
 #     prices = [1876.56, .9997, 1, .9997, .000001343] 
 
 
-#     data = json.loads(Main.f(ETHEREUM_POOLS , pools, prices))
+#     data = Main.f(ETHEREUM_POOLS , pools, prices))
 #     print(json.dumps(data, indent=4))
 """
 Create a thread and oppotunity with reserves, if worthwhile submit opptonuty to chain

@@ -14,12 +14,12 @@ class TOKEN():
             symbol: str,
             address: str,
             global_index: int,
-            unit_conversion: int,
+            decimals: int,
     ) -> None:
         self.symbol = symbol
         self.address = address
         self.global_index = global_index
-        self.unit_conversion = unit_conversion
+        self.decimals = decimals
         self.spot = 1 if symbol == 'USDC' else None
     """
     Debug
@@ -56,14 +56,14 @@ class DEX():
         self.fee = fee
         reserves = [0.0] * len(tokens)
         """
-        Get reserves on init
+        Get reserves on init need to change the conteract call based on
         """
         if(ws_endpoint != None):
             web3 = Web3(HTTPProvider(ws_endpoint))
             pair_contract = web3.eth.contract(address=address, abi=abi)
             reserves = pair_contract.functions.getReserves().call()
             reserves.pop()
-            reserves = list(map(lambda x : x[1] / (10 ** tokens[x[0]].unit_conversion), enumerate(reserves)))
+            reserves = list(map(lambda x : x[1] / (10 ** tokens[x[0]].decimals), enumerate(reserves)))
 
         self.reserves: List[float] = reserves
         self.tokens = tokens
