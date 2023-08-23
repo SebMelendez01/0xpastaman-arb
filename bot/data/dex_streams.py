@@ -8,7 +8,9 @@ import eth_utils
 import asyncio
 import websockets
 import aioprocessing
-from typing import Dict, Optional, Any
+import urllib.request 
+
+from typing import Dict, Optional, Any, List
 from web3 import  Web3, WebsocketProvider
 from data.dex import DEX, CFMM_TYPE, TOKEN
 from data.utils import reconnecting_websocket_loop
@@ -30,27 +32,34 @@ class DexStream:
 
     def __init__(
             self,
-            dex_dict: Dict[str, DEX],
+            rpc_endpoint: str,
             ws_endpoint: str,
             publisher: Optional[aioprocessing.AioQueue] = None,
-            #  message_formatter: Callable = default_message_format,
+            subscriber: Optional[aioprocessing.AioQueue] = None,
             debug: bool = False
     ):
-        self.dex_dict = dex_dict
+        
+        self.dex_dict ={}
+        self.token_list = {}
+        self.num_tokens = 0
+
+        self.rpc_endpoint = rpc_endpoint
         self.ws_endpoint = ws_endpoint
         self.publisher = publisher
+        self.subscriber = subscriber
         self.web3 = Web3(WebsocketProvider(ws_endpoint))
         self.debug = debug
+
+        with urllib.request.urlopen("https://gist.githubusercontent.com/veox/8800debbf56e24718f9f483e1e40c35c/raw/f853187315486225002ba56e5283c1dba0556e6f/erc20.abi.json") as url:
+            self.erc20_abi = json.load(url)
     
+
+    """
+    Publish data to be executed with Julia code
+    """
     def publish(self, data: Any):
         if self.publisher:
             self.publisher.put(data)
-
-    def handle_update_reserves(self, address, reserves):
-        dex = self.dex_dict[address]
-        for index, reserve in enumerate(reserves):
-            reserves[index] = reserve / (10 ** dex.tokens[index].decimals)
-        return self.dex_dict[address].update_reserves(reserves)
 
     """
 
@@ -69,10 +78,12 @@ class DexStream:
     """
     def message_format(self):
         pools = []
-        prices = [None] * 5 # NEED TO SET DYNAMICALLY
+        
+        prices = {}
+
         for _, value in self.dex_dict.items():
             for token in value.tokens:
-                prices[token.global_index - 1] = token.get_spot_price() 
+                prices[token.global_index - 1] = token.get_price() 
             data = {
                 "pool" : (value.get_reserves(), value.fee, list(token.global_index for token in value.tokens)),
                 "type" : value.type.value,
@@ -86,11 +97,73 @@ class DexStream:
             "prices" : prices,
             "time" : time.time()
         }
+
+
+    """
+    Create Tokens 
+    """
+    def create_token(self, address):
+        if address in self.token_list:
+            return self.token_list[address]
+        self.num_tokens += 1
+        address = self.web3.to_checksum_address(address)
+        erc20 = self.web3.eth.contract(address=address, abi=self.erc20_abi)
+        decimals = erc20.functions.decimals()
+        symbol = erc20.functions.symbol()
+        
+        self.token_list[address] = TOKEN(symbol, address, self.num_tokens, decimals)
+        return self.token_list[address]
+        
+
+    """
+    **TO DO**
+        1. Make code *starts with a "a" but forgetting name... I think
+    """
+    def add_dex(self, address:str, type:CFMM_TYPE, tokens:List[TOKEN]):
+        with urllib.request.urlopen("https://unpkg.com/@uniswap/v2-core@1.0.0/build/IUniswapV2Pair.json") as url:
+            uniswapV2_abi = json.load(url)["abi"]
+        if type == CFMM_TYPE.UNISWAPV2:
+            self.dex_dict[address] = DEX(uniswapV2_abi, type, address, .997, tokens)
+            print("The length of the dictionary is {}".format(len(self.dex_dict)))
+
+
+    def get_type(self, _type):
+        if _type == CFMM_TYPE.UNISWAPV2.value:
+            return CFMM_TYPE.UNISWAPV2
+        elif _type == CFMM_TYPE.UNISWAPV3.value:
+            return CFMM_TYPE.UNISWAPV3
+        elif _type == CFMM_TYPE.BALENCER.value:
+            return CFMM_TYPE.BALENCER
+        elif _type == CFMM_TYPE.CURVE.value:
+            return CFMM_TYPE.CURVE
+        
+    async def stream_dex_data(self):
+        print("Started stream_dex_data")
+        while True:
+            try: 
+                data = await self.subscriber.coro_get()
+                print(json.dumps(data, indent=4))
+                if data["address"] not in self.dex_dict:
+                    tokens = list(map(lambda x: self.create_token(x), data["tokens"]))
+                    self.add_dex(data["address"], self.get_type(data["type"]), tokens)
+            except Exception as err:
+                # pass
+                print(f'error: {err}')
+
+    """
+    Once Dexes are added 
+    """
+    def handle_update_reserves(self, address, reserves):
+        dex = self.dex_dict[address]
+        for index, reserve in enumerate(reserves):
+            reserves[index] = reserve / (10 ** dex.tokens[index].decimals)
+        return self.dex_dict[address].update_reserves(reserves)
+
     async def stream_uniswap_v2_sync_events(self):
         sync_event_selector = self.web3.keccak(
             text='Sync(uint112,uint112)'
         ).hex()
-        pools =  list(self.dex_dict.keys())
+        
         
 
         async with websockets.connect(self.ws_endpoint) as ws:
@@ -110,6 +183,9 @@ class DexStream:
                 msg = await asyncio.wait_for(ws.recv(), timeout=60 * 10)
                 event = json.loads(msg)['params']['result']
                 address = event['address'].lower()
+                pools =  list(self.dex_dict.keys()) ## Will need to add Semaphores
+                print(address)
+                print(pools)
                 if address in pools:
                     s = time.time()
                     data = eth_abi.decode(
@@ -149,7 +225,6 @@ if __name__ == "__main__":
         .997,
         [token0, token1]
     )
-    
     dex_stream = DexStream(
         {"0x0d4a11d5EEaaC28EC3F61d100daF4d40471f1852".lower(): dex},
         infura_ws,

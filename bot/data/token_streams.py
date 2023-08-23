@@ -57,7 +57,7 @@ class TokenStream:
                 price_data = json.loads(msg)
                 symbol = price_data["product_id"].split("-")[0]
                 spot = float(price_data["price"])
-                if self.tokens[symbol].update_stop_price(spot):
+                if self.tokens[symbol].update_price(spot):
                     hello = "TO DO"
                     # print("TO DO: SEND MESSAGE")
                 e = time.time()

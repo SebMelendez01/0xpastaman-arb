@@ -1,6 +1,13 @@
+import os
+import json
+import requests
 from enum import Enum
 from typing import Dict, List
 from web3 import  Web3, HTTPProvider
+from dotenv import load_dotenv
+
+load_dotenv()
+MORALIS_API_KEY = os.getenv('MORALIS_API_KEY')
 
 class CFMM_TYPE(Enum):
     UNISWAPV2 = "ProductTwoCoin"
@@ -14,28 +21,30 @@ class TOKEN():
             symbol: str,
             address: str,
             global_index: int,
-            decimals: int,
+            decimals: int
     ) -> None:
         self.symbol = symbol
         self.address = address
         self.global_index = global_index
         self.decimals = decimals
-        self.spot = 1 if symbol == 'USDC' else None
+        self.price = 0.0
+        
     """
     Debug
     """
     def debug_message(self) -> str:
-        return f"{self.symbol}: ${self.spot}"
+        return f"{self.symbol}: ${self.price}"
     """
     setters
     """
-    def update_stop_price(self, spot):
-        if spot != self.spot:
-            self.spot = spot
+    def update_price(self, price):
+        if price != self.price:
+            self.price = price
             return True
         return False
-    def get_spot_price(self) -> float:
-        return self.spot
+    
+    def get_price(self) -> float:
+        return self.price
 
 class DEX():
     def __init__(
@@ -43,23 +52,33 @@ class DEX():
             abi: str,
             type: CFMM_TYPE,
             address: str,
-            trading_symbols: List[str],
             fee: float,
             tokens: List[TOKEN],
-            ws_endpoint: str = None
+            rpc_endpoint: str = None
 
     ):
         self.abi = abi
         self.type = type
         self.address = address
-        self.trading_symbols = trading_symbols
         self.fee = fee
         reserves = [0.0] * len(tokens)
+        self.request_url = "https://deep-index.moralis.io/api/v2/erc20/prices?chain=eth"
+        self.headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-API-Key": MORALIS_API_KEY
+        }
+        tokens_payload = list(map(lambda x : { "token_address" : x.address} , tokens))
+        self.payload = {
+            "tokens": tokens_payload
+        }
+
+        
         """
         Get reserves on init need to change the conteract call based on
         """
-        if(ws_endpoint != None):
-            web3 = Web3(HTTPProvider(ws_endpoint))
+        if(rpc_endpoint != None):
+            web3 = Web3(HTTPProvider(rpc_endpoint))
             pair_contract = web3.eth.contract(address=address, abi=abi)
             reserves = pair_contract.functions.getReserves().call()
             reserves.pop()
@@ -67,11 +86,19 @@ class DEX():
 
         self.reserves: List[float] = reserves
         self.tokens = tokens
+        """
+        Set the token Prices
+        """
+        response = requests.request("POST", self.request_url, json=self.payload, headers=self.headers)
+        response_object = json.loads(response.text)
+        for idx, token_val in enumerate(response_object):
+            self.tokens[idx].update_price(token_val["usdPrice"])
+
     """
     Debug function
     """
     def debug_message(self) -> str:
-        return f"{self.type.value} {self.address} -> {self.trading_symbols[0]}(${self.tokens[0].get_spot_price()}): {self.reserves[0]}, {self.trading_symbols[1]}(${self.tokens[1].get_spot_price()}): {self.reserves[1]}"
+        return f"{self.type.value} {self.address} -> {self.tokens[0].symbol}(${self.tokens[0].get_price()}): {self.reserves[0]}, {self.tokens[1].symbol}(${self.tokens[1].get_price()}): {self.reserves[1]}"
     """
     Getters
     """
@@ -91,6 +118,12 @@ class DEX():
             self, 
             reserves: List[float]
         ):
+
+        response = requests.request("POST", self.request_url, json=self.payload, headers=self.headers)
+        response_object = json.loads(response.text)
+        for idx, token_val in enumerate(response_object):
+            self.tokens[idx].update_price(token_val["usdPrice"])
+        
         if self.reserves != reserves:
             self.reserves = reserves
 
@@ -106,7 +139,6 @@ if __name__ == "__main__":
         uniswap_pair_abi,
         CFMM_TYPE.UNISWAPV2,
         "0x0d4a11d5EEaaC28EC3F61d100daF4d40471f1852",
-        ['ETH', 'USDT'],
         .997,
         [token0, token1]
     )

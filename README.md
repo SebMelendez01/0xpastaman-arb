@@ -1,19 +1,55 @@
 # 0xpastaman-bot Overview
 The goal of this project was to better understand the world of MEV specific arbitrage. This bot is not made to be put into production and compete in Arb opportunities. 
 
-Now that we are past a disclaimer, lets get into it. This bot focuses on off-chain simulation for uniswap_v2 specifically solving the convex optimization problem of CFMMs. In order to compute if there is an opportunity two streams are set up, a `TokenStream` and a `DexStream`, on a sub-process. Every time the reserve data is updated, i.e. `'Sync(uint112,uint112)'` event is detected, the main process computes if there is an opportunity.
+Now that we are past a disclaimer, lets get into it. This bot focuses on off-chain simulation for uniswap_v2 specifically solving the convex optimization problem of CFMMs. In order to compute if there is an opportunity two streams are set up, a `MempoolStream` and a `DexStream`, on a sub-process. Every time the reserve data is updated, i.e. `Sync(uint112,uint112)` event is detected, the main process computes if there is an opportunity.
 
-### Current Vunerablities
-The bot currently does not take into account "poison tokens." Currently the transaction profit is not simulated on chain and therefore the bot risks submitting transactions to the network that will not be or were never valid. This can be fixed with the flashbots code by only calling `coinbase.transer` if the transaction was profitable and everything succeeded. 
-### Future Work and Next Steps
+The `TokenStream` is currently being fazed out for a more scalable `MempoolStream`.  The currently file for executing is `bot/execute.py`
+## Current Problems
+I have set up a mempool scraper but the transactions I am scraping are old and the pools that I am decoding from the mempool only have a single transaction. I need to get more up to date transactions from my mempool scraper. There may also be a blocking problem with how python works and setting up a `aioQueue` essentially a `pipe`. `.coro_get()` blocks as well as the websocket.[**TO DO LOOK INTO and see if it is a problem.**] Can set up a system test of and see if on of the aync streams is getting blocked. 
+## Current Vunerablities
+The bot currently does not take into account "poison tokens." Currently the transaction profit is not simulated on chain and therefore the bot risks submitting transactions to the network that will not be or were never valid. This can be fixed with the flashbots code by only calling `coinbase.transfer` if the transaction was profitable and everything succeeded. 
+## Future Work and Next Steps
+### Scaleing Option (CEX)
+One way to scale is to do a little bit of upfront work and for a specific API/oracle get all of the tokens that can be queried for a specific price, then find all of the ERC20 addresses. Then use the factory address in order to get all of the viable pools. We can then create all of DEXs add the DEXs to the DEX stream and then we are able to ensure that each token price can be queried. This is less dynamic work and is more upfront. This would also create a significantly larger number of DEX's to run the simulation on and many of the pools we would be looking at would not actually contribute to finding an Arbitrage.
+### **Scaling Option (MEMPOOL and CEX/Price Feed)**
+#### CoinGeckoAPI
 Updating the Framework: In order to scale the `DexStream` and `TokenStream` effeciently we need to dynaically get Dex's from the Mempool. We can do this by using a `filter` to look specifically for any `transaction` that interacts with the UniswapV2Router. We can then take the `path` function param and find all the paths that people are swaping through but calling the `FactoryV2` contract. We can then check if the token price exists on some API service, if it does we can add the tokens to both the `DexStream` and `TokenStream`.
 
-Note: CoingeckoAPI doesn't allow me to get all to coins that I want. Need to figure out another solution
+Note: CoingeckoAPI doesn't allow me to get all to coins that I want. Need to figure out another solution. Instead of CoinGecko look  into [ANKR](https://www.ankr.com/docs/advanced-api/token-methods/#ankr_gettokenprice)
 
-
-The bot currently does not scrape/listen to the mempool for DEX's/Tokens to add to the `DexStream` and `TokenStream`. The goal is to instead of using Coinbase API to get the token prices use CoinGeckoAPI as you can send the token address rather that the Ticker Symbol of the token. This will be more effecient and allow for the ability to get DEXs and tokens based on addresses rather than keeping a database to switch. If we are to use the CoinGeckoAPI although it would allow a for use to get price data based on `address` we would need to poll for the data. Best way to do that is instead of set up a stream, every time reserves are updated we quickly request for all token prices async. If I go ahead with this I can turn the token stream into the Mempool stream. 
+The bot currently does not scrape/listen to the mempool for DEX's/Tokens to add to the `DexStream` and `TokenStream`. The goal is to instead of using Coinbase API to get the token prices use CoinGeckoAPI as you can send the token address rather that the Ticker Symbol of the token. This will be more effecient and allow for the ability to get DEXs and tokens based on addresses rather than keeping a database to switch. If we are to use the CoinGeckoAPI although it would allow for us to get price data based on `address` we would need to poll for the data. Best way to do that is instead of set up a stream, every time reserves are updated we quickly request for all token prices async. If I go ahead with this I can turn the token stream into the Mempool stream. 
 
 The issue with not constantly checking the price is that arbs can be created from a change in reserve amount on a dex but also a change in the token price on a CEX. By only getting price data when reserves changes we miss an opportunity. 
+#### MORALIS (CURRENT SOLUTION)
+This API allows me to query based on token address nearly any ERC20 token. It would be reliant on someone elses system but it would allow me to have a finished product and scalable system much faster. 
+
+    payload = {
+        "tokens": [
+            {
+                "token_address": "0xae7ab96520de3a18e5e111b5eaab095312d7fe84",
+            }
+        ]
+    }
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-API-Key": "API-KEY"
+    }
+
+    response = requests.request("POST", url, json=payload, headers=headers)
+
+    print(response.text)
+
+
+Use the moralis API and update the token price whenever the reserves are updated for the tokens in that dex. 
+
+The issue with this is I am completely reliant on another technology for token price updates that do not seem to be the most accurrate and from a real time feed. Example is ETH has been staying at a price of $1616.03 which is off the price the actual price of 2 dollars. The data is said to be being pulled from UniV3 so this is possible and not out of the range of possibility but something to note. The price feeds may not be real time. 
+
+### **Scaling Option (MEMPOOL and DEX)**
+The final option is to instead of update the token price data from a centralized source we do it from the DEX data, everytime a pools reserve price is updated we would update the price data for those 2 tokens. This would make the price data significantly more volitile and we would want to run it through a Kalman filter as the price of a token should be somewhere around the range of all of the token prices every time they are updated. Assuming markets have some sort of effeciency. 
+
+To get the price of a token I may be able to use this and update it every time a tokens comes in. The issue is I wouldn't be able to calculate the pruce until I have 2 Transactions in the pool. I would need to create a staging and a final. This may also be good because it would limit the DEXs that I look at to only ones with more that 2 transactions. I can remove DEXs from the Stageing area every `n` seconds if another transaction as not come in, this would be a sort of built in filter for pools trading more volume: https://docs.uniswap.org/contracts/v2/concepts/core-concepts/oracles
+
 
 ### Current implemenation 
 Pools are required to be build by the user. This is not scalable and as more code is added this will be fixed. The currently contract implementation is only golfed AAVE flashloan calls. Uniswap FlashCall is also another option. We are also currently only looking at UniV2
